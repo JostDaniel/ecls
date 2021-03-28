@@ -1,0 +1,352 @@
+---
+title: "Group 1: Matching"
+author: "Ashrita Achar, Daniel Jost, Aurélien Leyder & Lea Rodiqi"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output: rmdformats::robobook
+---
+
+```{r setup, include=FALSE}
+# using package rmdformats for html output
+
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_knit$set(root.dir = "~/GitHub/ecls") # change working directory
+```
+
+<!-- COMMENTS (not included in html)
+
+Task assignment
+· Every working group prepares a tutorial in the format of a lecturecast. Could also be several smaller lecturecasts but the total running time should be at least 30 minutes (not significantly less). Free software: e.g. movavi, camstudio, VLC player, etc.
+
+· I leave it up to you how you divide the work within your group (i.e. if 1 person speaks all the time, or if you divide it etc. 1 file vs multiple lecturecast files). The lecture cast should contain instructions you would have given anyway in class. Everything else is up to you. 
+
+· Note that the focus of the lecturecasts is on application in statistical software and on interpretation of results. You don't have the explain the method itself again in great detail.
+
+Please upload  small document that contains a) the link to the lecturecast b) some additional exercises for the hands-on tutorial. You find your group deadline on learn@wu.
+
+Please also e-mail me (stefan.angel@wu.ac.at) a document that c) illustrates the solutions to these exercises. Same deadline as above.
+
+Both b) and c) can be in any format you like (e.g. again lecture casts with instructions and solutions or a simple pdf with information in writing).
+
+extension ideas:
+- illustrate curse of dimensionality aka why exact matching might not be a good idea
+- use different matching algo than NN
+- include more/other covariates*
+- combine with did
+- use different data
+
+* Variables that influence simultaneously the treatment likelihood and the outcome AND
+* Variables that cannot be influenced by the treatment (slide 34, see also slide 35)
+
+common support (slide 39): Minima and maxima comparison & Trimming
+
+
+additional exercises for the hands-on tutorial (as PDF):
+- ...
+
+
+other R package for matching: "Matching" 
+
+--> 
+`5765 - Specialization: Economic and Social Policy`
+
+# Introduction
+
+Code Source: [github.com/sejdemyr/ecls](https://github.com/sejdemyr/ecls)
+
+Data Source: [childandfamilydataarchive.org](https://www.childandfamilydataarchive.org/cfda/archives/cfda/studies/4075)
+
+
+
+Loading required packages: 
+```{r, message=FALSE}
+library(tidyverse)   # welcome to the dark side
+library(haven)       # to import spss files
+library(sjmisc)      # data and variable transformation
+library(MatchIt)     # matching fun
+```
+
+# Data Wrangling
+
+from ecls-clean.R of [github.com/sejdemyr/ecls](https://github.com/sejdemyr/ecls)
+
+-   An R script for processing data from the Early Childhood Longitudinal Study.
+
+-   The output is saved to 'data-processed/ecls.csv'.
+
+## Read data
+
+Note: this may take a little while. If you're getting a "can't allocate memory" error, install the latest version of `haven` and restart R.
+```{r}
+dta <- read_por('data-raw/04075-0001-Data.por')
+names(dta) <- tolower(names(dta))
+```
+
+## Convert variables
+
+Convert variables of interest to character/numeric
+```{r, warning=FALSE}
+vars_chrs <- c("childid",
+               "l5cathol",
+               "l5public",
+               "r5race",
+               "w3povrty",
+               "w3daded",
+               "w3momed",
+               "w3inccat",
+               "p5fstamp")
+
+vars_nums <- c("w3momscr",
+               "w3dadscr",
+               "p5numpla",
+               "p5hmage",
+               "p5hdage",
+               "c5r2mtsc")
+
+dta <- dta %>%
+  mutate_at(vars(one_of(vars_chrs)), funs(as.character(to_label(.)))) %>%
+  mutate_at(vars(one_of(vars_nums)), funs(as.numeric(as.character(to_label(.)))))
+```
+
+Select variables of interest
+```{r}
+dta <- dta %>% dplyr::select(one_of(c(vars_chrs, vars_nums)))
+```
+
+## Create dummies & recoding
+
+Create catholic dummy: Filter down to catholic and public school students and create a dummy for catholic
+```{r}
+dta <- dta %>%
+  filter(l5cathol == 'YES' | l5public == 'YES') %>%
+  mutate(catholic = if_else(l5cathol == 'YES', 1, 0))
+```
+
+Create race dummies
+```{r}
+dta <- dta %>%
+  mutate(race_white = if_else(r5race == 'WHITE, NON-HISPANIC', 1, 0),
+         race_black = if_else(r5race == 'BLACK OR AFRICAN AMERICAN, NON-HISPANIC', 1, 0),
+         race_hispanic = if_else(r5race %in% c('HISPANIC, RACE SPECIFIED', 'HISPANIC, RACE NOT SPECIFIED'), 1, 0),
+         race_asian = if_else(r5race == 'ASIAN', 1, 0))
+```
+
+Set scores of 0 or below on occupational prestige scores, number of places lived, and mother's/father's age to NA
+```{r}
+dta <- dta %>%
+  mutate_at(vars(w3momscr, w3dadscr, p5numpla, p5hmage, p5hdage),
+            funs(ifelse(. <= 0, NA, .)))
+```
+
+Create poverty and food stamp dummies
+```{r}
+dta <- dta %>%
+  mutate(w3povrty = if_else(w3povrty == 'BELOW POVERTY THRESHOLD', 1, 0),
+         p5fstamp = if_else(p5fstamp == 'YES', 1, if_else(p5fstamp == 'NO', 0, as.double(NA))))
+```
+
+Create dummies for high school or below (grouping 'some college' as above)
+```{r}
+hs_cats <- c('8TH GRADE OR BELOW', '9TH - 12TH GRADE', 'HIGH SCHOOL DIPLOMA/EQUIVALENT',
+             'VOC/TECH PROGRAM')
+dta <- dta %>%
+  mutate_at(vars(w3daded, w3momed),
+            funs('hsb' = if_else(. %in% hs_cats, 1,
+                          if_else(. == 'NOT APPLICABLE', as.double(NA), 0))))
+```
+
+Recode income categories to numeric: Income categories are set at their midvalue. 5000 or less is set to 5000; 200,001 or more is set to 200,001.
+```{r}
+dta <- dta %>%
+  mutate(w3inccat = if_else(w3inccat == '$5,000 OR LESS', '$5,000 TO $5,000',
+                            if_else(w3inccat == '$200,001 OR MORE', '$200,001 TO $200,001', w3inccat)))
+
+convert_income <- function(s) {                              # function for converting income
+  split_mat <- str_split_fixed(s, " TO ", n = 2)
+  split_mat <- gsub('\\$|,', '', split_mat)
+  (as.numeric(split_mat[, 1]) + as.numeric(split_mat[, 2])) / 2
+}
+
+test <- unique(dta$w3inccat)                                 # test function
+data.frame(test, convert_income(test))
+
+dta <- dta %>% mutate(w3income = convert_income(w3inccat))   # finally, convert income
+```
+
+## Standardized math score
+
+Clean math t score and create a standardized score
+
+```{r}
+dta <- dta %>%
+  mutate(c5r2mtsc = if_else(c5r2mtsc <= 0, as.double(NA), as.numeric(c5r2mtsc)),
+         c5r2mtsc_std = (c5r2mtsc - mean(c5r2mtsc, na.rm = T)) / sd(c5r2mtsc, na.rm = T))
+```
+
+Remove observations with missing math score
+
+```{r}
+dta <- dta %>% filter(!c5r2mtsc %in% NA)
+```
+
+## Select and rename variables
+
+```{r}
+dta <- dta %>% dplyr::select(childid, catholic, race = r5race, race_white, race_black, race_hispanic, race_asian, p5numpla, p5hmage, p5hdage, w3daded, w3momed, w3daded_hsb, w3momed_hsb, w3momscr, w3dadscr, w3inccat, w3income, w3povrty, p5fstamp, c5r2mtsc, c5r2mtsc_std)
+
+write.csv(dta, 'data-processed/ecls.csv', row.names = FALSE)
+```
+
+# Matching
+
+Steps:
+
+1. Pre-analysis
+
+2. Estimate propensity score
+
+3. Check and define region of common support (overlap)
+
+4. *Match*
+
+5. Examine covariate balance
+
+6. Estimate treatment effects
+
+
+```{r}
+setwd("~/GitHub/ecls/data-processed")
+ecls <- read.csv("ecls.csv")
+```
+
+## Pre-analysis using non-matched data
+### Difference-in-means: outcome variable
+```{r, message=FALSE, warning=FALSE}
+ecls %>%
+  group_by(catholic) %>%
+  summarise(n_students = n(),
+            mean_math = mean(c5r2mtsc_std),
+            std_error = sd(c5r2mtsc_std) / sqrt(n_students))
+
+
+ecls %>%
+  mutate(test = (c5r2mtsc - mean(c5r2mtsc)) / sd(c5r2mtsc)) %>% #this is how the math score is standardized
+  group_by(catholic) %>%
+  summarise(mean_math = mean(test))
+
+with(ecls, t.test(c5r2mtsc_std ~ catholic))
+```
+
+### Difference-in-means: pre-treatment covariates
+```{r}
+ecls_cov <- c('race_white', 'p5hmage', 'w3income', 'p5numpla', 'w3momed_hsb')
+
+ecls %>%
+  group_by(catholic) %>%
+  select(one_of(ecls_cov)) %>%
+  summarise_all(funs(mean(., na.rm = T)))
+
+lapply(ecls_cov, function(v) {
+  t.test(ecls[, v] ~ ecls[, 'catholic'])
+})
+```
+
+## Propensity score estimation
+- using a logit model (probit can also be used)
+
+- outcome variable is a binary variable indicating treatment status
+
+- any covariate that is related to both the treatment assignment and potential outcomes has to be included
+```{r}
+ecls <- ecls %>% mutate(w3income_1k = w3income / 1000)
+m_ps <- glm(catholic ~ race_white + w3income_1k + p5hmage + p5numpla + w3momed_hsb,
+            family = binomial(), data = ecls)
+summary(m_ps)
+
+prs_df <- data.frame(pr_score = predict(m_ps, type = "response"),
+                     catholic = m_ps$model$catholic)
+```
+
+## Check and define region of common support
+```{r, include=FALSE}
+labs <- paste("Actual school type attended:", c("Catholic", "Public"))
+
+prs_df %>%
+  mutate(catholic = ifelse(catholic == 1, labs[1], labs[2])) %>%
+  ggplot(aes(x = pr_score)) +
+  geom_histogram(color = "white") +
+  facet_wrap(~catholic) +
+  xlab("Probability of going to Catholic school") +
+  theme_bw()
+
+ggplot(prs_df, aes(x = pr_score)) +
+  geom_histogram(data=subset(prs_df, catholic == 0), fill="blue", color="white", alpha = .5) +
+  geom_histogram(data=subset(prs_df, catholic == 1), fill="red",  color="white", alpha = .5) +
+  xlab("Probability of going to Catholic school") +
+  theme_bw()
+```
+
+
+```{r, message=FALSE, warning=FALSE}
+ggplot(prs_df, aes(x = pr_score, fill = factor(catholic))) +
+  geom_histogram(color = "#FFFFFFAA", alpha = 0.6) +
+  xlab("Probability of going to Catholic school") +
+  scale_y_continuous(expand = expansion(mult=c(0,0))) +
+  scale_x_continuous(expand = expansion(mult=c(0,0))) +
+  scale_fill_manual(name = "", values = c("red", "blue"), labels = c("Public", "Catholic")) +
+  theme_bw() +
+  theme(panel.border = element_blank())
+```
+
+## Executing a matching algorithm
+```{r}
+ecls_nomiss <- ecls %>%  # MatchIt does not allow missing values
+  select(c5r2mtsc_std, catholic, one_of(ecls_cov)) %>%
+  na.omit()
+
+mod_match <- matchit(catholic ~ race_white + w3income + p5hmage + p5numpla + w3momed_hsb,
+                     method = "nearest", data = ecls_nomiss)
+dta_m <- match.data(mod_match)
+dim(dta_m)
+
+fn_bal <- function(dta, variable) {
+  dta$variable <- dta[, variable]
+  dta$catholic <- as.factor(dta$catholic)
+  ggplot(dta, aes(x = distance, y = variable, color = catholic)) +
+    geom_point(alpha = 0.2, size = 1.5) +
+    geom_smooth(method = "loess", se = F) +
+    xlab("Propensity score") +
+    ylab(variable) +
+    scale_color_manual(name = "", values = c("red", "blue"), labels = c("Public", "Catholic")) +
+    theme_bw() +
+    theme(panel.border = element_blank())
+}
+```
+
+## Checking balance
+```{r, message=FALSE, warning=FALSE}
+library(gridExtra)
+grid.arrange(
+   fn_bal(dta_m, "w3income"),
+   fn_bal(dta_m, "p5numpla") + theme(legend.position = "none"),
+   fn_bal(dta_m, "p5hmage"),
+   fn_bal(dta_m, "w3momed_hsb") + theme(legend.position = "none"),
+   fn_bal(dta_m, "race_white"),
+   nrow = 3, widths = c(1, 0.85)
+)
+
+dta_m %>%
+    group_by(catholic) %>%
+    summarise_all(funs(mean))
+```
+
+## Estimating treatment effects
+```{r}
+with(dta_m, t.test(c5r2mtsc_std ~ catholic))
+
+lm_treat1 <- lm(c5r2mtsc_std ~ catholic, data = dta_m)
+summary(lm_treat1)
+
+lm_treat2 <- lm(c5r2mtsc_std ~ catholic + race_white + p5hmage +
+                  I(w3income / 10^3) + p5numpla + w3momed_hsb, data = dta_m)
+summary(lm_treat2)
+```
