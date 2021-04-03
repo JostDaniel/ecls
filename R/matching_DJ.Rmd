@@ -9,9 +9,14 @@ output: rmdformats::robobook
 # using package rmdformats for html output
 
 knitr::opts_chunk$set(echo = TRUE)
-knitr::opts_knit$set(root.dir = "~/GitHub/ecls") # change working directory
+knitr::opts_chunk$set(class.source="bg-warning")
+
+################################  !  !  !  !  !
+knitr::opts_knit$set(root.dir = "~/GitHub/ecls") # change working directory to ecls folder
+################################  !  !  !  !  !
 ```
 
+```{=html} 
 <!-- COMMENTS (not included in html)
 
 Task assignment
@@ -27,11 +32,11 @@ Please also e-mail me (stefan.angel@wu.ac.at) a document that c) illustrates the
 
 Both b) and c) can be in any format you like (e.g. again lecture casts with instructions and solutions or a simple pdf with information in writing).
 
-extension ideas:
+extension ideas (can also be used as exercises):
 - illustrate curse of dimensionality aka why exact matching might not be a good idea
 - use different matching algo than NN
 - include more/other covariates*
-- combine with did
+- use other estimation method (e.g. combine with did)
 - use different data
 
 * Variables that influence simultaneously the treatment likelihood and the outcome AND
@@ -41,23 +46,32 @@ common support (slide 39): Minima and maxima comparison & Trimming
 
 
 additional exercises for the hands-on tutorial (as PDF):
-- ...
+- interpret at the end
+- which matching method worked the best?
+- change
 
+-->
+```
 
-other R package for matching: "Matching" 
-
---> 
 `5765 - Specialization: Economic and Social Policy`
 
 # Introduction
 
-Code Source: [github.com/sejdemyr/ecls](https://github.com/sejdemyr/ecls)
+**Code Sources:** [Tutorial by Ejdemyr](https://github.com/sejdemyr/ecls), [MatchIt](https://cran.r-project.org/web/packages/MatchIt)
 
-Data Source: [childandfamilydataarchive.org](https://www.childandfamilydataarchive.org/cfda/archives/cfda/studies/4075)
+**Data Source:** [childandfamilydataarchive.org](https://www.childandfamilydataarchive.org/cfda/archives/cfda/studies/4075)
 
+For R there are two main packages for matching: 
 
+- `MatchIt`, which will be used in this tutorial and 
 
-Loading required packages: 
+- `Matching`
+
+> "The goal of matching is to produce covariate balance, that is, for the distributions of covariates in the two groups to be approximately equal to each other, as they would be in a successful randomized experiment. The importance of covariate balance is that it allows for increased robustness to the choice of model used to estimate the treatment effect; in perfectly balanced samples, a simple difference in means can be a valid treatment effect estimate." ([MatchIt Vignette](https://cran.r-project.org/web/packages/MatchIt/vignettes/MatchIt.html))
+
+> "A matching analysis involves four primary steps: 1) planning, 2) matching, 3) assessing the quality of matches, and 4) estimating the treatment effect and its uncertainty." ([MatchIt Vignette](https://cran.r-project.org/web/packages/MatchIt/vignettes/MatchIt.html))
+
+Loading required packages (`install.packages()` first if necessary):
 ```{r, message=FALSE}
 library(tidyverse)   # welcome to the dark side
 library(haven)       # to import spss files
@@ -65,9 +79,34 @@ library(sjmisc)      # data and variable transformation
 library(MatchIt)     # matching fun
 ```
 
+> "In this tutorial we'll analyze the effect of going to Catholic school, as opposed to public school, on student achievement. Because students who attend Catholic school on average are different from students who attend public school, we will use propensity score matching to get more credible causal estimates of Catholic schooling." [Tutorial by Ejdemyr](https://sejdemyr.github.io/r-tutorials/statistics/tutorial8.html)
+
+**General intuition of matching:**
+
+1. for each treated observation, ﬁnd a non-treated observation that is as similar as possible
+
+2. compare outcomes between treated and non-treated groups
+
+
+**Options when using matching:**
+
+- *Choice of covariates:* Variables that influence the treatment likelihood (propensity score) and the outcome AND that cannot be influenced by the treatment
+
+- *Similarity measure:* coveriate vector (multi-dimensional) OR single index based on coveriates (one-dimensional, e.g. prpensity score)
+
+- *Methods for choosing control observations (Number of matches per treated unit):* Nearest-neighbour (1:1 matching), M-nearest-neighbour (1:M matching), Kernel (1:all matching)
+
+- *Distance measure:* e.g. Euclidean distance, Mahalanobis (covariance-normalized) distance ect.
+
+- *Replacement*: with OR w/o replacement
+
+- *Causal estimation method:* simple comparison of means, OLS, DiD etc.
+
+\Rightarrow Since there are many subjective choices in matching setup reporting different matching methods is a good idea to reduce researcher bias.
+
 # Data Wrangling
 
-from ecls-clean.R of [github.com/sejdemyr/ecls](https://github.com/sejdemyr/ecls)
+from ecls-clean.R of [Tutorial by Ejdemyr](https://github.com/sejdemyr/ecls)
 
 -   An R script for processing data from the Early Childhood Longitudinal Study.
 
@@ -76,6 +115,7 @@ from ecls-clean.R of [github.com/sejdemyr/ecls](https://github.com/sejdemyr/ecls
 ## Read data
 
 Note: this may take a little while. If you're getting a "can't allocate memory" error, install the latest version of `haven` and restart R.
+
 ```{r}
 dta <- read_por('data-raw/04075-0001-Data.por')
 names(dta) <- tolower(names(dta))
@@ -84,6 +124,7 @@ names(dta) <- tolower(names(dta))
 ## Convert variables
 
 Convert variables of interest to character/numeric
+
 ```{r, warning=FALSE}
 vars_chrs <- c("childid",
                "l5cathol",
@@ -108,6 +149,7 @@ dta <- dta %>%
 ```
 
 Select variables of interest
+
 ```{r}
 dta <- dta %>% dplyr::select(one_of(c(vars_chrs, vars_nums)))
 ```
@@ -115,6 +157,7 @@ dta <- dta %>% dplyr::select(one_of(c(vars_chrs, vars_nums)))
 ## Create dummies & recoding
 
 Create catholic dummy: Filter down to catholic and public school students and create a dummy for catholic
+
 ```{r}
 dta <- dta %>%
   filter(l5cathol == 'YES' | l5public == 'YES') %>%
@@ -122,6 +165,7 @@ dta <- dta %>%
 ```
 
 Create race dummies
+
 ```{r}
 dta <- dta %>%
   mutate(race_white = if_else(r5race == 'WHITE, NON-HISPANIC', 1, 0),
@@ -131,6 +175,7 @@ dta <- dta %>%
 ```
 
 Set scores of 0 or below on occupational prestige scores, number of places lived, and mother's/father's age to NA
+
 ```{r}
 dta <- dta %>%
   mutate_at(vars(w3momscr, w3dadscr, p5numpla, p5hmage, p5hdage),
@@ -138,6 +183,7 @@ dta <- dta %>%
 ```
 
 Create poverty and food stamp dummies
+
 ```{r}
 dta <- dta %>%
   mutate(w3povrty = if_else(w3povrty == 'BELOW POVERTY THRESHOLD', 1, 0),
@@ -145,6 +191,7 @@ dta <- dta %>%
 ```
 
 Create dummies for high school or below (grouping 'some college' as above)
+
 ```{r}
 hs_cats <- c('8TH GRADE OR BELOW', '9TH - 12TH GRADE', 'HIGH SCHOOL DIPLOMA/EQUIVALENT',
              'VOC/TECH PROGRAM')
@@ -155,6 +202,7 @@ dta <- dta %>%
 ```
 
 Recode income categories to numeric: Income categories are set at their midvalue. 5000 or less is set to 5000; 200,001 or more is set to 200,001.
+
 ```{r}
 dta <- dta %>%
   mutate(w3inccat = if_else(w3inccat == '$5,000 OR LESS', '$5,000 TO $5,000',
@@ -170,6 +218,7 @@ test <- unique(dta$w3inccat)                                 # test function
 data.frame(test, convert_income(test))
 
 dta <- dta %>% mutate(w3income = convert_income(w3inccat))   # finally, convert income
+
 ```
 
 ## Standardized math score
@@ -191,82 +240,140 @@ dta <- dta %>% filter(!c5r2mtsc %in% NA)
 ## Select and rename variables
 
 ```{r}
-dta <- dta %>% dplyr::select(childid, catholic, race = r5race, race_white, race_black, race_hispanic, race_asian, p5numpla, p5hmage, p5hdage, w3daded, w3momed, w3daded_hsb, w3momed_hsb, w3momscr, w3dadscr, w3inccat, w3income, w3povrty, p5fstamp, c5r2mtsc, c5r2mtsc_std)
+dta <- dta %>% dplyr::select(childid, catholic, race = r5race, race_white, race_black, race_hispanic, race_asian, p5numpla, p5hmage, p5hdage, w3daded, w3momed, w3daded_hsb, w3momed_hsb, w3momscr, w3dadscr, w3inccat, w3income, w3povrty, p5fstamp, test = c5r2mtsc, test_std = c5r2mtsc_std)
 
 write.csv(dta, 'data-processed/ecls.csv', row.names = FALSE)
 ```
 
-# Matching
+## Next Steps
 
-Steps:
+1.  Pre-analysis
 
-1. Pre-analysis
+2.  Estimate propensity score
 
-2. Estimate propensity score
+3.  Check and define region of common support (overlap)
 
-3. Check and define region of common support (overlap)
+4.  **Match**
 
-4. *Match*
+5.  Examine covariate balance
 
-5. Examine covariate balance
+6.  Estimate treatment effects
 
-6. Estimate treatment effects
-
+# 1. Pre-analysis
+Pre-analysis using non-matched data
 
 ```{r}
 setwd("~/GitHub/ecls/data-processed")
 ecls <- read.csv("ecls.csv")
+
+ecls <- ecls %>% mutate(w3income_1k = w3income / 1000)                    # ????
 ```
 
-## Pre-analysis using non-matched data
-### Difference-in-means: outcome variable
+## Difference-in-means: outcome variable
+
+Let's check the outcome difference on the raw data. The outcome variable is a math test score (standardized so that mean is 0 and standard deviation is one). The explanatory variable is a dummy indicating whether a student went to a catholic (catholic = 1) or public school (catholic = 0).
+
 ```{r, message=FALSE, warning=FALSE}
 ecls %>%
   group_by(catholic) %>%
   summarise(n_students = n(),
-            mean_math = mean(c5r2mtsc_std),
-            std_error = sd(c5r2mtsc_std) / sqrt(n_students))
-
-
-ecls %>%
-  mutate(test = (c5r2mtsc - mean(c5r2mtsc)) / sd(c5r2mtsc)) %>% #this is how the math score is standardized
-  group_by(catholic) %>%
-  summarise(mean_math = mean(test))
-
-with(ecls, t.test(c5r2mtsc_std ~ catholic))
+            mean_test = mean(test_std),
+            std_error = sd(test_std) / sqrt(n_students))
 ```
 
-### Difference-in-means: pre-treatment covariates
-```{r}
+The average test score of students of catholic schools is more than 20% of a standard deviation higher than that of public school students. The small standard error indicates that this difference is statistically significant. To make sure let's perform a t-test.
+
+```{r, message=FALSE, warning=FALSE}
+with(ecls, t.test(test_std ~ catholic))
+```
+As expected the difference is highly significant.
+
+## Difference-in-means: pre-treatment covariates
+
+The following variables are used:
+
+| name        | description   | class   | values |
+|-------------|---------------|---------|--------|
+| race_white  | Race          | dummy   | white (1) |
+| w3income    | Family income | numeric | in steps of 2.500 |
+| p5hmage     | Mother’s age  | numeric | |
+| p5numpla    | Number of places the student has lived for at least 4 months | numeric | |
+| w3momed_hsb | mother’s education level | dummy | high-school or below (1), college or more (0) |
+
+Let’s calculate the mean for each covariate by the treatment status (catholic):
+
+```{r, message=FALSE}
 ecls_cov <- c('race_white', 'p5hmage', 'w3income', 'p5numpla', 'w3momed_hsb')
 
 ecls %>%
   group_by(catholic) %>%
   select(one_of(ecls_cov)) %>%
   summarise_all(funs(mean(., na.rm = T)))
-
-lapply(ecls_cov, function(v) {
-  t.test(ecls[, v] ~ ecls[, 'catholic'])
-})
 ```
 
-## Propensity score estimation
-- using a logit model (probit can also be used)
+The most distinct differences are probably the higher percentage of white students, family income and  mother's education level for students of catholic schools. All of these differences are an indicator that the students are not directly comparable since the mother's education for example might be correlated with both the probability of treatment (going to a catholic school) and the student achievement (math test score).
+
+Let's check if the differences are all significant.
+
+```{r}
+ttest <- lapply(ecls_cov, function(v) {
+  t.test(ecls[, v] ~ ecls[, 'catholic'])
+})
+
+for (i in c(1:5)) {
+  print(ttest[[i]]$p.value)
+}
+```
+All differences are statistically significant.
+
+## Formula
+
+```{r}
+formula <- catholic ~ race_white + w3income + p5hmage + p5numpla + w3momed_hsb
+```
+
+## Check Initial Imbalance
+```{r}
+ecls_nomiss <- ecls %>%  # MatchIt does not allow missing values
+  select(test_std, catholic, one_of(ecls_cov)) %>%
+  na.omit()
+```
+
+No matching yet but just constructing a pre-match matchit object to check balance prior to matching by setting `method = NULL`. With `distance` you set the method to estimate the propensity score. "glm" stands for "generalized linear model", which implements a logistic regression. Other options include "mahalanobis", "randomforest" etc. (call `?distance` for all options).
+```{r}
+pre_match <- matchit(formula, method = NULL, distance = "glm", data = ecls_nomiss)
+dta_pre <- match.data(pre_match)
+dim(dta_pre)
+```
+`dta_pre` will be used later to compare initial imbalance to the matched data.
+
+# 2. Propensity score estimation
+
+
+
+- Propensity score is the probability of treatment given the covariates (one-dimensional summary)
 
 - outcome variable is a binary variable indicating treatment status
 
-- any covariate that is related to both the treatment assignment and potential outcomes has to be included
-```{r}
-ecls <- ecls %>% mutate(w3income_1k = w3income / 1000)
-m_ps <- glm(catholic ~ race_white + w3income_1k + p5hmage + p5numpla + w3momed_hsb,
-            family = binomial(), data = ecls)
-summary(m_ps)
+- we use a logit model (probit can also be used)
 
+- any covariate that is related to both the treatment assignment and potential outcomes should be included
+
+```{r}
+m_ps <- glm(formula, family = binomial(), data = ecls)
+summary(m_ps)
+```
+
+`predict()` calculates the propensity score which we save in a data frame
+```{r}
 prs_df <- data.frame(pr_score = predict(m_ps, type = "response"),
                      catholic = m_ps$model$catholic)
 ```
 
-## Check and define region of common support
+# 3. Region of common support
+
+Next, we will check and define region of common support, that is the overlapping distribution of the propensity scores of students attending a catholic on the one hand and a public school on the other hand.
+
 ```{r, include=FALSE}
 labs <- paste("Actual school type attended:", c("Catholic", "Public"))
 
@@ -285,10 +392,9 @@ ggplot(prs_df, aes(x = pr_score)) +
   theme_bw()
 ```
 
-
 ```{r, message=FALSE, warning=FALSE}
 ggplot(prs_df, aes(x = pr_score, fill = factor(catholic))) +
-  geom_histogram(color = "#FFFFFFAA", alpha = 0.6) +
+  geom_histogram(binwidth=.01, color = "#FFFFFFAA", alpha = 0.6) +
   xlab("Probability of going to Catholic school") +
   scale_y_continuous(expand = expansion(mult=c(0,0))) +
   scale_x_continuous(expand = expansion(mult=c(0,0))) +
@@ -296,23 +402,54 @@ ggplot(prs_df, aes(x = pr_score, fill = factor(catholic))) +
   theme_bw() +
   theme(panel.border = element_blank())
 ```
-
-## Executing a matching algorithm
 ```{r}
-ecls_nomiss <- ecls %>%  # MatchIt does not allow missing values
-  select(c5r2mtsc_std, catholic, one_of(ecls_cov)) %>%
-  na.omit()
+prs_df %>% group_by(catholic) %>% summarize(range(pr_score))
+```
+As we can see in the plot and from the summary table both students from catholic and public schools have a similar range of propensity scores. 
 
-mod_match <- matchit(catholic ~ race_white + w3income + p5hmage + p5numpla + w3momed_hsb,
-                     method = "nearest", data = ecls_nomiss)
+# 4. Matching Magic
+
+Executing a matching algorithm
+
+## Exact matching
+
+pro: no functional form assumptions are required on either the treatment or outcome model
+
+con: typically many units will be discarded (curse of dimensionality)
+
+```{r}
+x_match <- matchit(formula, method = "exact", distance = "glm", data = ecls_nomiss)
+dta_x <- match.data(x_match)
+dim(dta_x)
+```
+
+## Coarsened exact matching
+
+```{r}
+c_match <- matchit(formula, method = "cem", distance = "glm", data = ecls_nomiss)
+dta_c <- match.data(x_match)
+dim(dta_c)
+```
+
+## Nearest neighbor propensity score matching
+
+```{r}
+mod_match <- matchit(formula, method = "nearest", data = ecls_nomiss)
 dta_m <- match.data(mod_match)
 dim(dta_m)
+```
 
+# 5. Checking balance
+
+## Visually
+
+Ggplot function for visual comparison:
+```{r}
 fn_bal <- function(dta, variable) {
   dta$variable <- dta[, variable]
   dta$catholic <- as.factor(dta$catholic)
   ggplot(dta, aes(x = distance, y = variable, color = catholic)) +
-    geom_point(alpha = 0.2, size = 1.5) +
+    geom_point(alpha = 0.1, size = 1.5) +
     geom_smooth(method = "loess", se = F) +
     xlab("Propensity score") +
     ylab(variable) +
@@ -322,8 +459,48 @@ fn_bal <- function(dta, variable) {
 }
 ```
 
-## Checking balance
-```{r, message=FALSE, warning=FALSE}
+### Before Matching
+```{r, error=TRUE, message=FALSE}
+library(gridExtra)
+grid.arrange(
+   fn_bal(dta_pre, "w3income"),
+   fn_bal(dta_pre, "p5numpla") + theme(legend.position = "none"),
+   fn_bal(dta_pre, "p5hmage"),
+   fn_bal(dta_pre, "w3momed_hsb") + theme(legend.position = "none"),
+   fn_bal(dta_pre, "race_white"),
+   nrow = 3, widths = c(1, 0.85)
+)
+```
+
+### Exact Matching
+```{r, error=TRUE, message=FALSE}
+library(gridExtra)
+grid.arrange(
+   fn_bal(dta_x, "w3income"),
+   fn_bal(dta_x, "p5numpla") + theme(legend.position = "none"),
+   fn_bal(dta_x, "p5hmage"),
+   fn_bal(dta_x, "w3momed_hsb") + theme(legend.position = "none"),
+   fn_bal(dta_x, "race_white"),
+   nrow = 3, widths = c(1, 0.85)
+)
+
+```
+
+### Coarsened Exact Matching
+```{r, error=TRUE, message=FALSE}
+library(gridExtra)
+grid.arrange(
+   fn_bal(dta_c, "w3income"),
+   fn_bal(dta_c, "p5numpla") + theme(legend.position = "none"),
+   fn_bal(dta_c, "p5hmage"),
+   fn_bal(dta_c, "w3momed_hsb") + theme(legend.position = "none"),
+   fn_bal(dta_c, "race_white"),
+   nrow = 3, widths = c(1, 0.85)
+)
+```
+
+### Neigherest neighbor propensity score matching
+```{r, error=TRUE, message=FALSE}
 library(gridExtra)
 grid.arrange(
    fn_bal(dta_m, "w3income"),
@@ -334,19 +511,94 @@ grid.arrange(
    nrow = 3, widths = c(1, 0.85)
 )
 
+```
+
+## Mean difference
+
+### Before Matching
+```{r, error=TRUE, message=FALSE}
+dta_pre %>%
+    group_by(catholic) %>%
+    summarise_all(funs(mean))
+```
+
+### Exact Matching
+```{r, error=TRUE, message=FALSE}
+dta_x %>%
+    group_by(catholic) %>%
+    summarise_all(funs(mean))
+```
+
+### Coarsened Exact Matching
+```{r, error=TRUE, message=FALSE}
+dta_c %>%
+    group_by(catholic) %>%
+    summarise_all(funs(mean))
+```
+
+### Neigherest neighbor propensity score matching
+```{r, error=TRUE, message=FALSE}
 dta_m %>%
     group_by(catholic) %>%
     summarise_all(funs(mean))
 ```
 
-## Estimating treatment effects
-```{r}
-with(dta_m, t.test(c5r2mtsc_std ~ catholic))
+## T-test
 
-lm_treat1 <- lm(c5r2mtsc_std ~ catholic, data = dta_m)
+### Before Matching
+```{r, error=TRUE, message=FALSE}
+ttest_pre <- lapply(ecls_cov, function(v) {
+    t.test(dta_pre[, v] ~ dta_pre$catholic)
+})
+
+for (i in c(1:5)) {
+  print(ttest_pre[[i]]$p.value)
+}
+```
+
+### Exact Matching
+```{r, error=TRUE, message=FALSE}
+ttest_x <- lapply(ecls_cov, function(v) {
+    t.test(dta_x[, v] ~ dta_x$catholic)
+})
+
+for (i in c(1:5)) {
+  print(ttest_x[[i]]$p.value)
+}
+```
+
+### Coarsened Exact Matching
+```{r, error=TRUE, message=FALSE}
+ttest_c <- lapply(ecls_cov, function(v) {
+    t.test(dta_c[, v] ~ dta_c$catholic)
+})
+
+for (i in c(1:5)) {
+  print(ttest_c[[i]]$p.value)
+}
+```
+
+### Neigherest neighbor propensity score matching
+```{r, error=TRUE, message=FALSE}
+ttest_m <- lapply(ecls_cov, function(v) {
+    t.test(dta_m[, v] ~ dta_m$catholic)
+})
+
+for (i in c(1:5)) {
+  print(ttest_m[[i]]$p.value)
+}
+```
+
+# 6. Estimating treatment effects
+
+OLS
+```{r}
+with(dta_m, t.test(test_std ~ catholic))
+
+lm_treat1 <- lm(test_std ~ catholic, data = dta_m)
 summary(lm_treat1)
 
-lm_treat2 <- lm(c5r2mtsc_std ~ catholic + race_white + p5hmage +
+lm_treat2 <- lm(test_std ~ catholic + race_white + p5hmage +
                   I(w3income / 10^3) + p5numpla + w3momed_hsb, data = dta_m)
 summary(lm_treat2)
 ```
