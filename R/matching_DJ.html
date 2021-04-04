@@ -187,7 +187,11 @@
         </ul>
         <nav role="navigation" id="toc">
           <ul>
-          <li><a href="#introduction">Introduction</a></li>
+          <li><a href="#introduction">Introduction</a>
+          <ul>
+          <li><a href="#setup">Setup</a></li>
+          <li><a href="#matching">Matching</a></li>
+          </ul></li>
           <li><a href="#data-wrangling">Data Wrangling</a>
           <ul>
           <li><a href="#read-data">Read data</a></li>
@@ -260,7 +264,7 @@ Please also e-mail me (stefan.angel@wu.ac.at) a document that c) illustrates the
 
 Both b) and c) can be in any format you like (e.g. again lecture casts with instructions and solutions or a simple pdf with information in writing).
 
-extension ideas:
+extension ideas (can also be used as exercises):
 - illustrate curse of dimensionality aka why exact matching might not be a good idea
 - use different matching algo than NN
 - include more/other covariates*
@@ -276,46 +280,76 @@ common support (slide 39): Minima and maxima comparison & Trimming
 additional exercises for the hands-on tutorial (as PDF):
 - interpret at the end
 - which matching method worked the best?
-
-
-Questions:
-- "matching does not require pairing observations (indeed, there might have been less confusion if the technique had been called ‘‘pruning’’); only the distributions need be matched as closely as possible." (Ho et al. (2007): 212)
-- should exercises require coding or just interpretation etc.? BOTH
-- tutorial directly in R or HTML?
-
-other R package for matching: "Matching" 
+- change
 
 -->
 <p><code>5765 - Specialization: Economic and Social Policy</code></p>
 <div id="introduction" class="section level1">
 <h1>Introduction</h1>
+<p>This tutorial is based on a <a href="https://github.com/sejdemyr/ecls">Matching-Tutorial by Simon Ejdemyr</a> using <a href="https://www.childandfamilydataarchive.org/cfda/archives/cfda/studies/4075">US data</a> on student achievements (math test scores) and school types (public and catholic) for young pupils from the turn of the millennium. More specifically we are interested the effect of going to a Catholic school, as opposed to a public school, on student achievement. As we will see in the pre-analysis, students from Catholic schools are on average different from students who attend public school. Thus, they are not directly comparable and assuming selection on observable we perform matching to generate a sample in which treatment (in our case going to a catholic school) is independent of covariates.</p>
 <p><strong>Code Sources:</strong> <a href="https://github.com/sejdemyr/ecls">Tutorial by Ejdemyr</a>, <a href="https://cran.r-project.org/web/packages/MatchIt">MatchIt</a></p>
 <p><strong>Data Source:</strong> <a href="https://www.childandfamilydataarchive.org/cfda/archives/cfda/studies/4075">childandfamilydataarchive.org</a></p>
+<p>First, there are some steps that the R code works on your computer. Second, we will briefly repeat the main intuition and options when using matching methods. Third, some data wrangling is necessary to prepare the data and after that we will, finally, start with the actual tutorial which is structured as follows:</p>
+<ol style="list-style-type: decimal">
+<li><p>Pre-analysis</p></li>
+<li><p>Propensity score estimation</p></li>
+<li><p>Region of common support</p></li>
+<li><p>Matching Magic</p></li>
+<li><p>Checking balance</p></li>
+<li><p>Estimating treatment effects</p></li>
+</ol>
+<div id="setup" class="section level2">
+<h2>Setup</h2>
+<p>For the R code (as an Rmd file) to work you need to</p>
+<ol style="list-style-type: decimal">
+<li><p>Download the data</p></li>
+<li><p>Change the working directory</p></li>
+<li><p>Install required packages</p></li>
+</ol>
+<div id="download-the-data" class="section level3">
+<h3>1. Download the data</h3>
+<ul>
+<li><p>Go to <a href="https://www.childandfamilydataarchive.org/cfda/archives/cfda/studies/4075">https://www.childandfamilydataarchive.org/cfda/archives/cfda/studies/4075</a></p></li>
+<li><p>Click on ‘Download’, choose ‘SPSS’, read and accept the Terms of Use</p></li>
+<li><p>Annoying but necessary: create an account (using Google, LinkedIn or from scratch)</p></li>
+<li><p>Then you should be prompted to a page that automatically downloads the ZIP-file (57 MB)</p></li>
+<li><p>Unzip the downloaded zip file. In it, there’s a file called ‘04075-0001-Data.por’. Place this file directly in your working directory of R</p></li>
+</ul>
+</div>
+<div id="change-the-working-directory" class="section level3">
+<h3>2. Change the working directory</h3>
+<p>Change the working directory in the setup chunk of the Rmd file <code>knitr::opts_knit$set(root.dir = &quot;insert/working/directory&quot;)</code></p>
+</div>
+<div id="install-required-packages" class="section level3">
+<h3>3. Install required packages</h3>
+<p>install required packages if there not installed yet using <code>install.packages()</code> and load them in your current library</p>
+<div class="sourceCode" id="cb1"><pre class="sourceCode r bg-warning"><code class="sourceCode r"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="fu">library</span>(tidyverse)   <span class="co"># welcome to the dark side</span></span>
+<span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a><span class="fu">library</span>(haven)       <span class="co"># to import spss files</span></span>
+<span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a><span class="fu">library</span>(sjmisc)      <span class="co"># data and variable transformation</span></span>
+<span id="cb1-4"><a href="#cb1-4" aria-hidden="true" tabindex="-1"></a><span class="fu">library</span>(MatchIt)     <span class="co"># matching fun</span></span></code></pre></div>
 <p>For R there are two main packages for matching:</p>
 <ul>
 <li><p><code>MatchIt</code>, which will be used in this tutorial and</p></li>
 <li><p><code>Matching</code></p></li>
 </ul>
-<blockquote>
-<p>“The goal of matching is to produce covariate balance, that is, for the distributions of covariates in the two groups to be approximately equal to each other, as they would be in a successful randomized experiment. The importance of covariate balance is that it allows for increased robustness to the choice of model used to estimate the treatment effect; in perfectly balanced samples, a simple difference in means can be a valid treatment effect estimate.” (<a href="https://cran.r-project.org/web/packages/MatchIt/vignettes/MatchIt.html">MatchIt Vignette</a>)</p>
-</blockquote>
-<blockquote>
-<p>“A matching analysis involves four primary steps: 1) planning, 2) matching, 3) assessing the quality of matches, and 4) estimating the treatment effect and its uncertainty.” (<a href="https://cran.r-project.org/web/packages/MatchIt/vignettes/MatchIt.html">MatchIt Vignette</a>)</p>
-</blockquote>
-<p>Loading required packages:</p>
-<div class="sourceCode" id="cb1"><pre class="sourceCode r bg-warning"><code class="sourceCode r"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="fu">library</span>(tidyverse)   <span class="co"># welcome to the dark side</span></span>
-<span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a><span class="fu">library</span>(haven)       <span class="co"># to import spss files</span></span>
-<span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a><span class="fu">library</span>(sjmisc)      <span class="co"># data and variable transformation</span></span>
-<span id="cb1-4"><a href="#cb1-4" aria-hidden="true" tabindex="-1"></a><span class="fu">library</span>(MatchIt)     <span class="co"># matching fun</span></span></code></pre></div>
-<blockquote>
-<p>“In this tutorial we’ll analyze the effect of going to Catholic school, as opposed to public school, on student achievement. Because students who attend Catholic school on average are different from students who attend public school, we will use propensity score matching to get more credible causal estimates of Catholic schooling.” <a href="https://sejdemyr.github.io/r-tutorials/statistics/tutorial8.html">Tutorial by Ejdemyr</a></p>
-</blockquote>
-<p><strong>General intuition of matching:</strong></p>
+</div>
+</div>
+<div id="matching" class="section level2">
+<h2>Matching</h2>
+<div id="intuition" class="section level3">
+<h3>Intuition</h3>
+<p>General intuition of matching:</p>
 <ol style="list-style-type: decimal">
 <li><p>for each treated observation, ﬁnd a non-treated observation that is as similar as possible</p></li>
 <li><p>compare outcomes between treated and non-treated groups</p></li>
 </ol>
-<p><strong>Options when using matching:</strong></p>
+<blockquote>
+<p>“The goal of matching is to produce covariate balance, that is, for the distributions of covariates in the two groups to be approximately equal to each other, as they would be in a successful randomized experiment.” (<a href="https://cran.r-project.org/web/packages/MatchIt/vignettes/MatchIt.html">MatchIt Vignette</a>)</p>
+</blockquote>
+</div>
+<div id="options" class="section level3">
+<h3>Options</h3>
+<p>Options when using matching:</p>
 <ul>
 <li><p><em>Choice of covariates:</em> Variables that influence the treatment likelihood (propensity score) and the outcome AND that cannot be influenced by the treatment</p></li>
 <li><p><em>Similarity measure:</em> coveriate vector (multi-dimensional) OR single index based on coveriates (one-dimensional, e.g. prpensity score)</p></li>
@@ -325,6 +359,8 @@ other R package for matching: "Matching"
 <li><p><em>Causal estimation method:</em> simple comparison of means, OLS, DiD etc.</p></li>
 </ul>
 <p>Since there are many subjective choices in matching setup reporting different matching methods is a good idea to reduce researcher bias.</p>
+</div>
+</div>
 </div>
 <div id="data-wrangling" class="section level1">
 <h1>Data Wrangling</h1>

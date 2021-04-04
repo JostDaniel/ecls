@@ -11,9 +11,7 @@ output: rmdformats::robobook
 knitr::opts_chunk$set(echo = TRUE)
 knitr::opts_chunk$set(class.source="bg-warning")
 
-################################  !  !  !  !  !
-knitr::opts_knit$set(root.dir = "~/GitHub/ecls") # change working directory to ecls folder
-################################  !  !  !  !  !
+knitr::opts_knit$set(root.dir = "~/GitHub/ecls") # change working directory
 ```
 
 ```{=html} 
@@ -57,21 +55,57 @@ additional exercises for the hands-on tutorial (as PDF):
 
 # Introduction
 
+This tutorial is based on a [Matching-Tutorial by Simon Ejdemyr](https://github.com/sejdemyr/ecls) using [US data](https://www.childandfamilydataarchive.org/cfda/archives/cfda/studies/4075) on student achievements (math test scores) and school types (public and catholic) for young pupils from the turn of the millennium. More specifically we are interested the effect of going to a Catholic school, as opposed to a public school, on student achievement. As we will see in the pre-analysis, students from Catholic schools are on average different from students who attend public school. Thus, they are not directly comparable and assuming selection on observable we perform matching to generate a sample in which treatment (in our case going to a catholic school) is independent of covariates.
+
 **Code Sources:** [Tutorial by Ejdemyr](https://github.com/sejdemyr/ecls), [MatchIt](https://cran.r-project.org/web/packages/MatchIt)
 
 **Data Source:** [childandfamilydataarchive.org](https://www.childandfamilydataarchive.org/cfda/archives/cfda/studies/4075)
 
-For R there are two main packages for matching: 
+First, there are some steps that the R code works on your computer. Second, we will briefly repeat the main intuition and options when using matching methods. Third, some data wrangling is necessary to prepare the data and after that we will, finally, start with the actual tutorial which is structured as follows:
 
-- `MatchIt`, which will be used in this tutorial and 
+1. Pre-analysis
+   
+2. Propensity score estimation
+   
+3. Region of common support
 
-- `Matching`
+4. Matching Magic
 
-> "The goal of matching is to produce covariate balance, that is, for the distributions of covariates in the two groups to be approximately equal to each other, as they would be in a successful randomized experiment. The importance of covariate balance is that it allows for increased robustness to the choice of model used to estimate the treatment effect; in perfectly balanced samples, a simple difference in means can be a valid treatment effect estimate." ([MatchIt Vignette](https://cran.r-project.org/web/packages/MatchIt/vignettes/MatchIt.html))
+5. Checking balance
 
-> "A matching analysis involves four primary steps: 1) planning, 2) matching, 3) assessing the quality of matches, and 4) estimating the treatment effect and its uncertainty." ([MatchIt Vignette](https://cran.r-project.org/web/packages/MatchIt/vignettes/MatchIt.html))
+6. Estimating treatment effects
 
-Loading required packages (`install.packages()` first if necessary):
+## Setup
+
+For the R code (as an Rmd file) to work you need to 
+
+(1) Download the data 
+
+(2) Change the working directory
+
+(3) Install required packages
+
+
+### (1) Download the data
+
+- Go to [https://www.childandfamilydataarchive.org/cfda/archives/cfda/studies/4075](https://www.childandfamilydataarchive.org/cfda/archives/cfda/studies/4075)
+
+- Click on 'Download', choose 'SPSS', read and accept the Terms of Use
+
+- Annoying but necessary: create an account (using Google, LinkedIn or from scratch)
+
+- Then you should be prompted to a page that automatically downloads the ZIP-file (57 MB)
+
+- Unzip the downloaded zip file. In it, there's a file called '04075-0001-Data.por'. Place this file directly in your working directory of R
+
+
+### (2) Change the working directory
+
+Change the working directory in the setup chunk of the Rmd file `knitr::opts_knit$set(root.dir = "insert/working/directory")`
+
+
+### (3) Install required packages
+install required packages if there not installed yet using `install.packages()` and load them in your current library
 ```{r, message=FALSE}
 library(tidyverse)   # welcome to the dark side
 library(haven)       # to import spss files
@@ -79,16 +113,23 @@ library(sjmisc)      # data and variable transformation
 library(MatchIt)     # matching fun
 ```
 
-> "In this tutorial we'll analyze the effect of going to Catholic school, as opposed to public school, on student achievement. Because students who attend Catholic school on average are different from students who attend public school, we will use propensity score matching to get more credible causal estimates of Catholic schooling." [Tutorial by Ejdemyr](https://sejdemyr.github.io/r-tutorials/statistics/tutorial8.html)
+For R there are two main packages for matching: 
 
-**General intuition of matching:**
+- `MatchIt`, which will be used in this tutorial and 
+
+- `Matching`
+
+## Matching
+
+### General intuition of matching
 
 1. for each treated observation, ﬁnd a non-treated observation that is as similar as possible
 
 2. compare outcomes between treated and non-treated groups
 
+> "The goal of matching is to produce covariate balance, that is, for the distributions of covariates in the two groups to be approximately equal to each other, as they would be in a successful randomized experiment." ([MatchIt Vignette](https://cran.r-project.org/web/packages/MatchIt/vignettes/MatchIt.html))
 
-**Options when using matching:**
+### Options when using matching methods
 
 - *Choice of covariates:* Variables that influence the treatment likelihood (propensity score) and the outcome AND that cannot be influenced by the treatment
 
@@ -418,7 +459,10 @@ pro: no functional form assumptions are required on either the treatment or outc
 con: typically many units will be discarded (curse of dimensionality)
 
 ```{r}
-x_match <- matchit(formula, method = "exact", distance = "glm", data = ecls_nomiss)
+x_match <- matchit(formula, method = "exact", data = ecls_nomiss,
+                   estimand = "ATE", # controls how the weights are computed
+                   k2k = TRUE,       
+                   k2k.method = "mahalanobis")  # how the distance between units should be calculated if k2k = TRUE, "mahalanobis" for Mahalanobis distance matching
 dta_x <- match.data(x_match)
 dim(dta_x)
 ```
@@ -426,7 +470,10 @@ dim(dta_x)
 ## Coarsened exact matching
 
 ```{r}
-c_match <- matchit(formula, method = "cem", distance = "glm", data = ecls_nomiss)
+c_match <- matchit(formula, method = "cem", data = ecls_nomiss,
+                   estimand = "ATE", # controls how the weights are computed
+                   k2k = TRUE,       # if TRUE nearest neighbor matching without replacement will take place within each stratum, and any unmatched units will be dropped
+                   k2k.method = "mahalanobis")  # how the distance between units should be calculated if k2k = TRUE, "mahalanobis" for Mahalanobis distance matching
 dta_c <- match.data(x_match)
 dim(dta_c)
 ```
